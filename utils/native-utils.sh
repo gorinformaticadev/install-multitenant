@@ -21,6 +21,31 @@ MULTITENANT_DATA_DIR="/var/lib/multitenant"
 CERTBOT_WEBROOT="/var/www/certbot"
 
 # =============================================================================
+# Timezone
+# =============================================================================
+
+setup_timezone() {
+    local tz="${INSTALL_TIMEZONE:-Etc/UTC}"
+
+    if command -v timedatectl &>/dev/null; then
+        if timedatectl set-timezone "$tz" 2>/dev/null; then
+            log_info "Timezone configurado para: $tz"
+            return 0
+        fi
+    fi
+
+    if [[ -f "/usr/share/zoneinfo/$tz" ]]; then
+        ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
+        echo "$tz" > /etc/timezone
+        log_info "Timezone configurado para: $tz"
+        return 0
+    fi
+
+    log_warn "Timezone '$tz' invalido. Mantendo timezone atual."
+    return 0
+}
+
+# =============================================================================
 # Usuario do sistema
 # =============================================================================
 

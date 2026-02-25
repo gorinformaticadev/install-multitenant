@@ -64,6 +64,13 @@ run_uninstall_docker() {
         (sleep 2 && rm -rf "$PROJECT_ROOT") &
     fi
 
+    # 5. Remover usuario de sistema do aplicativo
+    if id "multitenant" &>/dev/null; then
+        log_info "Removendo usuario de sistema 'multitenant'..."
+        userdel -r multitenant 2>/dev/null || userdel multitenant 2>/dev/null || true
+    fi
+    rm -rf /var/log/multitenant /var/lib/multitenant /home/multitenant 2>/dev/null || true
+
     log_success "Desinstalacao concluida!"
     exit 0
 }
@@ -115,6 +122,13 @@ run_uninstall_native() {
         log_info "Removendo diretorio do projeto..."
         (sleep 2 && rm -rf "$PROJECT_ROOT") &
     fi
+
+    # 5. Remover usuario de sistema do aplicativo
+    if id "multitenant" &>/dev/null; then
+        log_info "Removendo usuario de sistema 'multitenant'..."
+        userdel -r multitenant 2>/dev/null || userdel multitenant 2>/dev/null || true
+    fi
+    rm -rf /var/log/multitenant /var/lib/multitenant /home/multitenant 2>/dev/null || true
 
     log_success "Desinstalacao concluida!"
     exit 0
