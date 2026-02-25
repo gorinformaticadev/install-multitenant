@@ -1,0 +1,35 @@
+[Unit]
+Description=Multitenant Backend (NestJS)
+Documentation=https://github.com/Projeto-menu-multitenant-seguro
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=multitenant
+Group=multitenant
+WorkingDirectory=__PROJECT_ROOT__/apps/backend
+Environment=NODE_ENV=__NODE_ENV__
+Environment=PORT=4000
+Environment=NODE_PATH=/usr/local/lib/node_modules:/opt/nodejs/lib/node_modules
+EnvironmentFile=__PROJECT_ROOT__/apps/backend/.env
+ExecStart=/usr/bin/env node dist/main.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=multitenant-backend
+
+# Limites de recursos
+LimitNOFILE=65535
+MemoryMax=1G
+
+# Seguranca (hardening basico)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=__PROJECT_ROOT__/apps/backend
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

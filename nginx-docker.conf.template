@@ -1,0 +1,93 @@
+# ==============================
+# Nginx - Docker Compose (prod)
+# Resolver DNS do Docker (127.0.0.11) para resolver frontend/backend
+# ==============================
+
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+# HTTP - redireciona para HTTPS (exceto ACME challenge)
+server {
+    listen 80;
+    server_name __DOMAIN__;
+
+    client_max_body_size 64m;
+
+    # Let's Encrypt / ACME challenge (certbot --webroot)
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    # Redirecionar todo o resto para HTTPS
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
+
+    access_log /var/log/nginx/multitenant.access.log;
+    error_log  /var/log/nginx/multitenant.error.log;
+}
+
+# HTTPS - ativo quando existem certificados em /etc/nginx/certs/
+server {
+    listen 443 ssl;
+    server_name __DOMAIN__;
+
+    ssl_certificate     /etc/nginx/certs/cert.pem;
+    ssl_certificate_key /etc/nginx/certs/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    client_max_body_size 64m;
+
+    set $frontend_upstream "http://frontend:5000";
+    set $backend_upstream "http://backend:4000";
+
+    location / {
+        proxy_pass $frontend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /api {
+        proxy_pass $backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /uploads {
+        proxy_pass $backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /socket.io {
+        proxy_pass $backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+
+    access_log /var/log/nginx/multitenant.ssl.access.log;
+    error_log  /var/log/nginx/multitenant.ssl.error.log;
+}
