@@ -423,9 +423,26 @@ install_certbot() {
 obtain_native_ssl_cert() {
     local domain="$1"
     local email="$2"
+    local acme_dir="$CERTBOT_WEBROOT/.well-known/acme-challenge"
+    local acme_probe="multitenant-acme-probe-$(date +%s)"
+    local acme_file="$acme_dir/$acme_probe"
 
     log_info "Obtendo certificado SSL para $domain via Certbot..."
     check_and_open_ports_native
+
+    mkdir -p "$acme_dir"
+    echo "ok-$acme_probe" > "$acme_file"
+    chmod 644 "$acme_file" 2>/dev/null || true
+
+    # Preflight local: garante que o Nginx serve o webroot ACME corretamente.
+    if command -v curl &>/dev/null; then
+        if curl -fsS -H "Host: $domain" "http://127.0.0.1/.well-known/acme-challenge/$acme_probe" >/dev/null 2>&1; then
+            log_info "Preflight ACME local OK (Nginx webroot acessivel)."
+        else
+            log_warn "Preflight ACME local falhou."
+            log_warn "Revise o location /.well-known/acme-challenge/ no Nginx e recarregue o servico."
+        fi
+    fi
 
     # Testar com staging primeiro
     log_info "Testando com Let's Encrypt staging..."
@@ -435,7 +452,7 @@ obtain_native_ssl_cert() {
         --email "$email" \
         --agree-tos \
         --test-cert \
-        --non-interactive 2>/dev/null; then
+        --non-interactive; then
 
         log_info "Staging OK. Obtendo certificado real..."
         certbot certonly --webroot \
@@ -451,13 +468,17 @@ obtain_native_ssl_cert() {
 
         if [[ -f "$cert_path" ]] && [[ -f "$key_path" ]]; then
             log_success "Certificado Let's Encrypt obtido para $domain"
+            rm -f "$acme_file" 2>/dev/null || true
             echo "$cert_path"
             return 0
         fi
     fi
 
+    rm -f "$acme_file" 2>/dev/null || true
+
     log_warn "Nao foi possivel obter certificado Let's Encrypt."
     log_warn "Verifique DNS (A/AAAA), abertura de porta 80 no firewall e regra de entrada no provedor cloud."
+    log_warn "Se o preflight local foi OK e ainda falhou, o bloqueio e externo ao servidor."
     return 1
 }
 
@@ -785,10 +806,16 @@ run_seeds() {
     log_info "Populando banco de dados (seed)..."
     cd "$PROJECT_ROOT/apps/backend"
 
-    # O projeto usa seed compilado em dist/prisma/seed.js.
-    # No fluxo nativo, garantir artefato antes de executar.
+    # Tentar o seed padrao do Prisma primeiro.
+    # O proprio comando usa a configuracao de seed do projeto.
+    if sudo -u multitenant npx prisma db seed; then
+        log_success "Seed executado com sucesso."
+        return 0
+    fi
+
+    # Fallback: compilar seed.ts manualmente se o artefato nao existir.
     if [[ ! -f dist/prisma/seed.js ]]; then
-        log_warn "Arquivo dist/prisma/seed.js nao encontrado. Compilando seed..."
+        log_warn "prisma db seed falhou e dist/prisma/seed.js nao existe. Compilando seed.ts..."
         if ! sudo -u multitenant pnpm exec tsc prisma/seed.ts \
             --outDir dist/prisma \
             --skipLibCheck \
@@ -800,11 +827,6 @@ run_seeds() {
             log_error "Verifique se o pacote 'typescript' esta instalado no workspace."
             return 1
         fi
-    fi
-
-    if sudo -u multitenant npx prisma db seed; then
-        log_success "Seed executado com sucesso."
-        return 0
     fi
 
     log_warn "Falha no prisma db seed. Tentando executar seed compilado diretamente..."
