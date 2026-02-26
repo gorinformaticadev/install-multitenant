@@ -402,7 +402,9 @@ configure_nginx_native() {
 
 check_certbot() {
     if command -v certbot &>/dev/null; then
-        log_info "Certbot ja instalado."
+        local certbot_version
+        certbot_version="$(certbot --version 2>/dev/null | head -1 || true)"
+        log_info "Certbot ja instalado: ${certbot_version:-versao desconhecida}"
         return 0
     fi
     return 1
@@ -410,14 +412,40 @@ check_certbot() {
 
 install_certbot() {
     if check_certbot; then
-        return 0
+        if certbot --help all 2>/dev/null | grep -q "tls-alpn-01"; then
+            return 0
+        fi
+        log_warn "Certbot atual sem suporte TLS-ALPN-01. Tentando atualizar para versao mais nova..."
     fi
 
     log_info "Instalando Certbot..."
 
-    apt-get install -y -qq certbot python3-certbot-nginx
+    # Preferir instalacao via snap para obter versao mais atual e melhor suporte de desafios.
+    if command -v snap &>/dev/null || apt-get install -y -qq snapd; then
+        systemctl enable --now snapd.socket 2>/dev/null || true
+        systemctl enable --now snapd.service 2>/dev/null || true
+        ln -sf /var/lib/snapd/snap /snap 2>/dev/null || true
 
-    log_success "Certbot instalado."
+        snap install core >/dev/null 2>&1 || true
+        snap refresh core >/dev/null 2>&1 || true
+        snap install --classic certbot >/dev/null 2>&1 || true
+        ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+    fi
+
+    # Fallback apt para ambientes sem snap.
+    if ! command -v certbot &>/dev/null; then
+        apt-get install -y -qq certbot python3-certbot-nginx
+    fi
+
+    if command -v certbot &>/dev/null; then
+        local certbot_version
+        certbot_version="$(certbot --version 2>/dev/null | head -1 || true)"
+        log_success "Certbot instalado: ${certbot_version:-versao desconhecida}"
+        return 0
+    fi
+
+    log_error "Falha ao instalar Certbot."
+    return 1
 }
 
 obtain_native_ssl_cert() {
@@ -476,9 +504,48 @@ obtain_native_ssl_cert() {
 
     rm -f "$acme_file" 2>/dev/null || true
 
+    # Fallback quando a porta 80 esta bloqueada externamente:
+    # usar standalone + tls-alpn-01 (porta 443), se suportado pela versao do certbot.
+    if certbot --help all 2>/dev/null | grep -q "tls-alpn-01"; then
+        log_warn "Falha no desafio HTTP-01 (webroot). Tentando fallback TLS-ALPN-01 na porta 443..."
+        if certbot certonly --standalone \
+            --preferred-challenges tls-alpn-01 \
+            -d "$domain" \
+            --email "$email" \
+            --agree-tos \
+            --test-cert \
+            --non-interactive \
+            --pre-hook "systemctl stop nginx" \
+            --post-hook "systemctl start nginx"; then
+
+            log_info "Fallback TLS-ALPN staging OK. Obtendo certificado real..."
+            certbot certonly --standalone \
+                --preferred-challenges tls-alpn-01 \
+                -d "$domain" \
+                --email "$email" \
+                --agree-tos \
+                --force-renewal \
+                --non-interactive \
+                --pre-hook "systemctl stop nginx" \
+                --post-hook "systemctl start nginx"
+
+            local cert_path_fallback="/etc/letsencrypt/live/$domain/fullchain.pem"
+            local key_path_fallback="/etc/letsencrypt/live/$domain/privkey.pem"
+            if [[ -f "$cert_path_fallback" ]] && [[ -f "$key_path_fallback" ]]; then
+                log_success "Certificado Let's Encrypt obtido via TLS-ALPN-01 para $domain"
+                rm -f "$acme_file" 2>/dev/null || true
+                echo "$cert_path_fallback"
+                return 0
+            fi
+        fi
+    else
+        log_warn "Este certbot nao suporta TLS-ALPN-01 nesta instalacao."
+    fi
+
     log_warn "Nao foi possivel obter certificado Let's Encrypt."
-    log_warn "Verifique DNS (A/AAAA), abertura de porta 80 no firewall e regra de entrada no provedor cloud."
-    log_warn "Se o preflight local foi OK e ainda falhou, o bloqueio e externo ao servidor."
+    log_warn "HTTP-01 falhou e o fallback automatico nao foi possivel."
+    log_warn "Opcao imediata: emitir por DNS-01 manual:"
+    log_warn "certbot certonly --manual --preferred-challenges dns -d $domain -m $email --agree-tos"
     return 1
 }
 

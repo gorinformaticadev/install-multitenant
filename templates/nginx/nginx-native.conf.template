@@ -12,6 +12,8 @@ server {
     listen [::]:80;
     server_name __DOMAIN__;
 
+    client_max_body_size 64m;
+
     # ACME challenge para Certbot
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -21,6 +23,9 @@ server {
     location / {
         return 301 https://$host$request_uri;
     }
+
+    access_log /var/log/nginx/multitenant.access.log;
+    error_log  /var/log/nginx/multitenant.error.log;
 }
 
 # HTTPS
@@ -49,7 +54,7 @@ server {
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
 
     # Tamanho maximo de upload
-    client_max_body_size 50M;
+    client_max_body_size 64m;
 
     # Proxy para API (backend NestJS)
     location /api {
@@ -63,6 +68,17 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    location /uploads {
+        proxy_pass http://backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
     }
 
     # WebSocket (Socket.IO)
@@ -75,6 +91,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
     }
 
     # Frontend (Next.js)
@@ -87,6 +104,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
     }
 
     # Assets estaticos do Next.js
@@ -102,4 +120,7 @@ server {
         return 200 'OK';
         add_header Content-Type text/plain;
     }
+
+    access_log /var/log/nginx/multitenant.ssl.access.log;
+    error_log  /var/log/nginx/multitenant.ssl.error.log;
 }
