@@ -789,14 +789,15 @@ run_seeds() {
     # No fluxo nativo, garantir artefato antes de executar.
     if [[ ! -f dist/prisma/seed.js ]]; then
         log_warn "Arquivo dist/prisma/seed.js nao encontrado. Compilando seed..."
-        if ! sudo -u multitenant npx tsc prisma/seed.ts \
+        if ! sudo -u multitenant pnpm exec tsc prisma/seed.ts \
             --outDir dist/prisma \
             --skipLibCheck \
             --module commonjs \
             --target ES2021 \
             --esModuleInterop \
             --resolveJsonModule; then
-            log_error "Falha ao compilar seed.ts para dist/prisma/seed.js"
+            log_error "Falha ao compilar seed.ts para dist/prisma/seed.js com pnpm exec tsc"
+            log_error "Verifique se o pacote 'typescript' esta instalado no workspace."
             return 1
         fi
     fi
