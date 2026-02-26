@@ -856,45 +856,53 @@ setup_systemd_services() {
 
 check_multitenant_environment() {
     log_info "Verificando ambiente do usuário multitenant..."
-    
-    # Verificar se o Node.js está disponível para o usuário multitenant
-    if ! sudo -u multitenant command -v node >/dev/null 2>&1; then
-        log_error "Node.js não está disponível para o usuário multitenant"
-        # Tentar configurar o PATH
-        sudo -u multitenant sh -c 'export PATH="$PATH:/usr/local/bin:/opt/nodejs/bin:$HOME/.nvm/versions/node/*/bin" >> ~/.bashrc'
-        # Atualizar o PATH
-        sudo -u multitenant sh -c 'hash -r'
-    fi
-    
-    # Verificar se o Node.js pode ser executado
-    local node_version=$(sudo -u multitenant node --version 2>/dev/null)
-    if [[ -n "$node_version" ]]; then
-        log_success "Node.js encontrado: $node_version"
+
+    local has_error=0
+
+    # Verificar Node.js no contexto de shell do usuario multitenant
+    if sudo -u multitenant sh -lc 'command -v node >/dev/null 2>&1'; then
+        local node_version
+        node_version="$(sudo -u multitenant sh -lc 'node --version' 2>/dev/null || true)"
+        if [[ -n "$node_version" ]]; then
+            log_success "Node.js encontrado: $node_version"
+        else
+            log_error "Node.js encontrado no PATH, mas nao pode ser executado pelo usuario multitenant"
+            has_error=1
+        fi
     else
-        log_warn "Node.js não pôde ser executado como usuário multitenant"
+        log_error "Node.js nao esta disponivel para o usuario multitenant"
+        has_error=1
     fi
-    
-    # Verificar se os arquivos necessários existem
+
+    # Verificar artefatos necessarios
     if [[ ! -f "$PROJECT_ROOT/apps/backend/dist/main.js" ]]; then
-        log_error "Arquivo backend dist/main.js não encontrado"
-        log_info "Certifique-se de que o build foi concluído com sucesso"
+        log_error "Arquivo backend dist/main.js nao encontrado"
+        log_info "Certifique-se de que o build do backend foi concluido com sucesso"
+        has_error=1
     else
         log_success "Arquivo backend encontrado"
     fi
-    
-    if [[ ! -f "$PROJECT_ROOT/apps/frontend/server.js" ]]; then
-        log_error "Arquivo frontend server.js não encontrado"
-        log_info "Certifique-se de que o build foi concluído com sucesso"
+
+    # O frontend e iniciado com `next start`; o artefato esperado e `.next/BUILD_ID`
+    if [[ ! -f "$PROJECT_ROOT/apps/frontend/.next/BUILD_ID" ]]; then
+        log_error "Artefato do frontend nao encontrado: apps/frontend/.next/BUILD_ID"
+        log_info "Certifique-se de que o build do frontend foi concluido com sucesso"
+        has_error=1
     else
-        log_success "Arquivo frontend encontrado"
+        log_success "Artefatos do frontend encontrados (.next/BUILD_ID)"
     fi
+
+    return "$has_error"
 }
 
 start_systemd_services() {
     log_info "Iniciando servicos..."
     
     # Verificar ambiente do usuário multitenant antes de iniciar
-    check_multitenant_environment
+    if ! check_multitenant_environment; then
+        log_error "Ambiente invalido para iniciar servicos. Corrija os erros acima."
+        return 1
+    fi
     
     # Iniciar backend primeiro e aguardar um pouco
     systemctl start multitenant-backend
