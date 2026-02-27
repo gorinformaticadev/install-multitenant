@@ -93,7 +93,18 @@ run_install() {
     export LETSENCRYPT_EMAIL="$email"
     export INSTALL_NO_PROMPT="$no_prompt"
 
+    # Garantir que o repositório existe
     ensure_project_repository
+
+    # Atualizar código da aplicação via Git (sempre que possível)
+    if [[ -d "$PROJECT_ROOT/.git" ]]; then
+        if command -v git &>/dev/null; then
+            log_info "Atualizando código da aplicação via Git..."
+            if ! update_git_code ""; then
+                log_warn "Não foi possível atualizar o código da aplicação. Continuando com a versão atual do repositório."
+            fi
+        fi
+    fi
 
     # Mostrar menu e obter modo selecionado
     show_installation_menu "$domain" "$email"
