@@ -43,15 +43,31 @@ run_uninstall_docker() {
 
     # 3. Limpeza total se solicitado
     if [[ "$total_purge" == "true" ]]; then
-        log_info "Removendo Docker e dependencias..."
-        apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        rm -rf /var/lib/docker
+        # Reverter regras de firewall abertas pelo instalador (80/443)
+        if [[ -f /var/lib/multitenant/firewall_ports_80_443_opened ]] && command -v ufw &>/dev/null; then
+            log_info "Revertendo regras de firewall (portas 80 e 443)..."
+            ufw delete allow 80/tcp >/dev/null 2>&1 || true
+            ufw delete allow 443/tcp >/dev/null 2>&1 || true
+            rm -f /var/lib/multitenant/firewall_ports_80_443_opened 2>/dev/null || true
+        fi
 
-        log_info "Removendo Nginx..."
-        apt-get purge -y nginx nginx-common
-        rm -rf /etc/nginx
+        # Remover Docker apenas se instalado pelo instalador
+        if [[ -f /var/lib/multitenant/installed_docker ]]; then
+            log_info "Removendo Docker e dependencias instaladas pelo instalador..."
+            apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            rm -rf /var/lib/docker
+        else
+            log_info "Docker nao foi instalado pelo instalador. Mantendo pacote Docker."
+        fi
 
-        log_info "Removendo certificados..."
+        # Remover Nginx de sistema apenas se instalado pelo instalador
+        if [[ -f /var/lib/multitenant/installed_nginx ]]; then
+            log_info "Removendo Nginx instalado pelo instalador..."
+            apt-get purge -y nginx nginx-common
+            rm -rf /etc/nginx
+        fi
+
+        log_info "Removendo certificados gerenciados pelo instalador..."
         rm -rf /etc/letsencrypt
         rm -rf /etc/ssl/multitenant
     fi
@@ -104,13 +120,60 @@ run_uninstall_native() {
 
     # 3. Limpeza total se solicitado
     if [[ "$total_purge" == "true" ]]; then
-        log_info "Removendo Node.js, pnpm e PostgreSQL..."
-        if confirm_action "Deseja remover o PostgreSQL (CUIDADO!)?" "n"; then
-            apt-get purge -y postgresql*
-            rm -rf /var/lib/postgresql
+        # Reverter regras de firewall abertas pelo instalador (80/443)
+        if [[ -f /var/lib/multitenant/firewall_ports_80_443_opened ]] && command -v ufw &>/dev/null; then
+            log_info "Revertendo regras de firewall (portas 80 e 443)..."
+            ufw delete allow 80/tcp >/dev/null 2>&1 || true
+            ufw delete allow 443/tcp >/dev/null 2>&1 || true
+            rm -f /var/lib/multitenant/firewall_ports_80_443_opened 2>/dev/null || true
         fi
-        apt-get purge -y nodejs
-        npm uninstall -g pnpm || true
+
+        log_info "Removendo dependencias instaladas pelo instalador..."
+
+        # PostgreSQL
+        if [[ -f /var/lib/multitenant/installed_postgresql ]]; then
+            if confirm_action "Remover PostgreSQL instalado pelo instalador (CUIDADO: remove dados)? " "n"; then
+                apt-get purge -y postgresql-15 postgresql-contrib-15 postgresql* || true
+                rm -rf /var/lib/postgresql
+            fi
+        else
+            log_info "PostgreSQL nao foi marcado como instalado pelo instalador. Mantendo pacote."
+        fi
+
+        # Redis
+        if [[ -f /var/lib/multitenant/installed_redis ]]; then
+            apt-get purge -y redis-server || true
+            rm -rf /var/lib/redis
+        fi
+
+        # Node.js
+        if [[ -f /var/lib/multitenant/installed_nodejs ]]; then
+            apt-get purge -y nodejs || true
+        fi
+
+        # pnpm
+        if [[ -f /var/lib/multitenant/installed_pnpm ]]; then
+            npm uninstall -g pnpm || true
+        fi
+
+        # PM2
+        if [[ -f /var/lib/multitenant/installed_pm2 ]]; then
+            npm uninstall -g pm2 || true
+            if id "multitenant" &>/dev/null; then
+                sudo -u multitenant sh -lc 'npm uninstall -g pm2' 2>/dev/null || true
+            fi
+        fi
+
+        # Certbot
+        if [[ -f /var/lib/multitenant/installed_certbot ]]; then
+            apt-get purge -y certbot python3-certbot-nginx || true
+        fi
+
+        # fail2ban
+        if [[ -f /var/lib/multitenant/installed_fail2ban ]]; then
+            apt-get purge -y fail2ban || true
+        fi
+
         rm -rf /etc/letsencrypt
         rm -rf /etc/ssl/multitenant
     fi

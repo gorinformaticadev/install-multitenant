@@ -49,6 +49,10 @@ install_docker() {
     systemctl enable docker
     
     log_success "Docker instalado: $(docker --version)"
+    
+    # Marcar que o Docker foi instalado pelo instalador
+    mkdir -p /var/lib/multitenant 2>/dev/null || true
+    touch /var/lib/multitenant/installed_docker 2>/dev/null || true
 }
 
 check_docker_compose() {

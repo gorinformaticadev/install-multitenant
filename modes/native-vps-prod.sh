@@ -66,8 +66,6 @@ run_native_vps_prod() {
 
     # --- 2. Instalar dependencias ---
     install_nodejs
-    # Preparar ambiente do usuário multitenant após instalação do Node.js e pnpm
-    prepare_multitenant_environment
     install_postgresql
     install_redis
     install_nginx
@@ -154,6 +152,8 @@ run_native_vps_prod() {
         ufw allow 443/tcp
         echo "y" | ufw enable
         log_success "Firewall configurado (portas 22, 80, 443 abertas)."
+        mkdir -p /var/lib/multitenant 2>/dev/null || true
+        touch /var/lib/multitenant/firewall_ports_80_443_opened 2>/dev/null || true
     fi
 
     # Atualizar pacotes
@@ -165,6 +165,8 @@ run_native_vps_prod() {
         systemctl enable fail2ban
         systemctl start fail2ban
         log_success "fail2ban instalado e ativo."
+        mkdir -p /var/lib/multitenant 2>/dev/null || true
+        touch /var/lib/multitenant/installed_fail2ban 2>/dev/null || true
     fi
 
     # Configurar limites de arquivos abertos

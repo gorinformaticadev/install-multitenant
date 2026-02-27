@@ -20,6 +20,9 @@ MULTITENANT_LOG_DIR="/var/log/multitenant"
 MULTITENANT_DATA_DIR="/var/lib/multitenant"
 CERTBOT_WEBROOT="/var/www/certbot"
 
+# Diretório de estado para rastrear componentes instalados pelo instalador
+MULTITENANT_STATE_DIR="$MULTITENANT_DATA_DIR"
+
 # =============================================================================
 # Timezone
 # =============================================================================
@@ -106,6 +109,8 @@ prepare_multitenant_environment() {
     # Instalar ou verificar pnpm globalmente e no usuário
     if ! command -v pnpm &>/dev/null; then
         npm install -g pnpm --unsafe-perm
+        mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+        touch "$MULTITENANT_STATE_DIR/installed_pnpm" 2>/dev/null || true
     fi
     
     # Garantir link em /usr/bin para o systemd
@@ -169,11 +174,16 @@ install_nodejs() {
 
     log_success "Node.js instalado: $(node --version)"
 
+    # Marcar que o Node.js foi instalado pelo instalador
+    mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+    touch "$MULTITENANT_STATE_DIR/installed_nodejs" 2>/dev/null || true
+    
     # Instalar pnpm globalmente
     if ! command -v pnpm &>/dev/null; then
         log_info "Instalando pnpm..."
         npm install -g pnpm
         log_success "pnpm instalado: $(pnpm --version)"
+        touch "$MULTITENANT_STATE_DIR/installed_pnpm" 2>/dev/null || true
     fi
 }
 
@@ -211,8 +221,10 @@ install_postgresql() {
 
     systemctl start postgresql
     systemctl enable postgresql
-
+    
     log_success "PostgreSQL 15 instalado e rodando."
+    mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+    touch "$MULTITENANT_STATE_DIR/installed_postgresql" 2>/dev/null || true
 }
 
 configure_postgresql() {
@@ -278,6 +290,9 @@ install_redis() {
     else
         log_warn "Redis instalado, mas nao respondeu ao ping. Verifique a configuracao."
     fi
+
+    mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+    touch "$MULTITENANT_STATE_DIR/installed_redis" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -307,6 +322,8 @@ install_pm2() {
     sudo -u multitenant pm2 startup systemd -u multitenant --hp /home/multitenant 2>/dev/null || true
 
     log_success "PM2 instalado."
+    mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+    touch "$MULTITENANT_STATE_DIR/installed_pm2" 2>/dev/null || true
 }
 
 # =============================================================================
@@ -332,6 +349,8 @@ install_nginx() {
     systemctl start nginx
     systemctl enable nginx
     log_success "Nginx instalado e rodando."
+    mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+    touch "$MULTITENANT_STATE_DIR/installed_nginx" 2>/dev/null || true
 }
 
 configure_nginx_native() {
@@ -380,6 +399,8 @@ install_certbot() {
     log_info "Instalando Certbot..."
     apt-get install -y -qq certbot python3-certbot-nginx
     log_success "Certbot instalado."
+    mkdir -p "$MULTITENANT_STATE_DIR" 2>/dev/null || true
+    touch "$MULTITENANT_STATE_DIR/installed_certbot" 2>/dev/null || true
 }
 
 obtain_native_ssl_cert() {

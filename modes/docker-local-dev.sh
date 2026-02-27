@@ -30,7 +30,7 @@ run_docker_local_dev() {
     fi
     
     if [[ ! -f "$PROJECT_ROOT/apps/frontend/.env.local" ]]; then
-        cp "$PROJECT_ROOT/apps/frontend/.env.example" "$PROJECT_ROOT/apps/frontend/.env.local" 2>/dev/null || true
+        cp "$PROJECT_ROOT/apps/frontend/.env.local.example" "$PROJECT_ROOT/apps/frontend/.env.local" 2>/dev/null || true
     fi
     
     # Subir containers
@@ -43,11 +43,11 @@ run_docker_local_dev() {
     
     # Executar migrations
     log_info "Executando migrations..."
-    docker exec -it multitenant-backend pnpm prisma migrate dev --name init || true
+    docker compose -f docker-compose.dev.yml exec backend pnpm exec prisma migrate dev --name init || true
     
     # Executar seeds
     log_info "Populando banco de dados..."
-    docker exec -it multitenant-backend pnpm prisma db seed || true
+    docker compose -f docker-compose.dev.yml exec backend pnpm exec prisma db seed || true
     
     print_separator
     echogreen "✓ Instalação concluída!"

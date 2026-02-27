@@ -37,6 +37,8 @@ check_and_open_ports() {
         ufw allow 80/tcp >/dev/null 2>&1 || true
         ufw allow 443/tcp >/dev/null 2>&1 || true
         log_info "Portas liberadas no UFW."
+        mkdir -p /var/lib/multitenant 2>/dev/null || true
+        touch /var/lib/multitenant/firewall_ports_80_443_opened 2>/dev/null || true
     fi
     
     # Verificar se iptables esta bloqueando

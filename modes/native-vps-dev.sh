@@ -71,12 +71,12 @@ run_native_vps_dev() {
         ufw allow 443/tcp
         echo "y" | ufw enable
         log_success "Firewall configurado (portas 22, 80, 443 abertas)."
+        mkdir -p /var/lib/multitenant 2>/dev/null || true
+        touch /var/lib/multitenant/firewall_ports_80_443_opened 2>/dev/null || true
     fi
 
     # --- 2. Instalar dependencias ---
     install_nodejs
-    # Preparar ambiente do usuário multitenant após instalação do Node.js e pnpm
-    prepare_multitenant_environment
     install_postgresql
     install_redis
     install_pm2
