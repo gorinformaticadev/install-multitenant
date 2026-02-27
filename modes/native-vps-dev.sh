@@ -63,6 +63,16 @@ run_native_vps_dev() {
     setup_timezone
     setup_directories
 
+    # Configurar Firewall (UFW)
+    if command -v ufw &>/dev/null; then
+        log_info "Configurando Firewall (UFW)..."
+        ufw allow ssh
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        echo "y" | ufw enable
+        log_success "Firewall configurado (portas 22, 80, 443 abertas)."
+    fi
+
     # --- 2. Instalar dependencias ---
     install_nodejs
     # Preparar ambiente do usuário multitenant após instalação do Node.js e pnpm

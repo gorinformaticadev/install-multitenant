@@ -105,18 +105,17 @@ prepare_multitenant_environment() {
     
     # Instalar ou verificar pnpm globalmente e no usuário
     if ! command -v pnpm &>/dev/null; then
-        npm install -g pnpm
+        npm install -g pnpm --unsafe-perm
     fi
 
     if ! sudo -u multitenant bash -lc 'command -v pnpm' >/dev/null 2>&1; then
         log_info "Instalando pnpm para o usuário multitenant..."
-        sudo -u multitenant bash -lc 'npm install -g pnpm' 2>/dev/null || true
+        sudo -u multitenant bash -lc 'npm install -g pnpm --unsafe-perm' 2>/dev/null || true
         
         # Link simbólico se necessário
-        if [[ -f /usr/local/bin/pnpm ]]; then
-            sudo -u multitenant ln -sf /usr/local/bin/pnpm /home/multitenant/.local/bin/pnpm 2>/dev/null || true
-        elif [[ -f /usr/bin/pnpm ]]; then
-            sudo -u multitenant ln -sf /usr/bin/pnpm /home/multitenant/.local/bin/pnpm 2>/dev/null || true
+        local pnpm_path=$(command -v pnpm)
+        if [[ -n "$pnpm_path" ]]; then
+            sudo -u multitenant ln -sf "$pnpm_path" /home/multitenant/.local/bin/pnpm 2>/dev/null || true
         fi
     fi
     
@@ -542,7 +541,7 @@ configure_backend_env() {
     upsert_env "REQUIRE_SECRET_MANAGER" "false" "$env_file"
 
     chown multitenant:multitenant "$env_file"
-    chmod 600 "$env_file"
+    chmod 640 "$env_file"
     log_success "Backend .env configurado."
 }
 
@@ -562,7 +561,7 @@ configure_frontend_env() {
     upsert_env "NEXT_PUBLIC_API_URL" "https://$domain/api" "$env_file"
 
     chown multitenant:multitenant "$env_file"
-    chmod 600 "$env_file"
+    chmod 640 "$env_file"
     log_success "Frontend .env.local configurado."
 }
 

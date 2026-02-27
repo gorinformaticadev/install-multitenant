@@ -143,8 +143,18 @@ run_native_vps_prod() {
 # Funcoes de hardening (apenas para producao)
 # =============================================================================
 
-harden_system() {
+    harden_system() {
     log_info "Aplicando hardening basico do sistema..."
+
+    # Configurar Firewall (UFW)
+    if command -v ufw &>/dev/null; then
+        log_info "Configurando Firewall (UFW)..."
+        ufw allow ssh
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        echo "y" | ufw enable
+        log_success "Firewall configurado (portas 22, 80, 443 abertas)."
+    fi
 
     # Atualizar pacotes
     apt-get upgrade -y -qq 2>/dev/null || true
