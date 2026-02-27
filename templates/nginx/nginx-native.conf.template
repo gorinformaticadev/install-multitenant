@@ -24,8 +24,8 @@ server {
         return 301 https://$host$request_uri;
     }
 
-    access_log /var/log/nginx/multitenant.access.log;
-    error_log  /var/log/nginx/multitenant.error.log;
+    access_log /var/log/nginx/access.log;
+    error_log  /var/log/nginx/error.log;
 }
 
 # HTTPS
@@ -121,6 +121,6 @@ server {
         add_header Content-Type text/plain;
     }
 
-    access_log /var/log/nginx/multitenant.ssl.access.log;
-    error_log  /var/log/nginx/multitenant.ssl.error.log;
+    access_log /var/log/nginx/access.log;
+    error_log  /var/log/nginx/error.log;
 }

@@ -309,6 +309,14 @@ install_pm2() {
 # =============================================================================
 
 install_nginx() {
+    # Remover Apache se existir para evitar conflito na porta 80
+    if command -v apache2 &>/dev/null; then
+        log_info "Removendo Apache para evitar conflitos de porta..."
+        systemctl stop apache2 2>/dev/null || true
+        apt-get remove -y -qq apache2 apache2-bin apache2-utils apache2-data 2>/dev/null || true
+        apt-get autoremove -y -qq 2>/dev/null || true
+    fi
+
     if command -v nginx &>/dev/null; then
         log_info "Nginx ja instalado."
         return 0
@@ -341,7 +349,8 @@ configure_nginx_native() {
         -e "s|__SSL_KEY__|$ssl_key|g" \
         "$tpl" > "$dest"
 
-    ln -sf "$dest" /etc/nginx/sites-enabled/default
+    # Remover o default para evitar conflito de porta 80
+    rm -f /etc/nginx/sites-enabled/default
     ln -sf "$dest" /etc/nginx/sites-enabled/multitenant 2>/dev/null || true
 
     if nginx -t >/dev/null 2>&1; then
