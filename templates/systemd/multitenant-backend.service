@@ -13,7 +13,7 @@ Environment=NODE_ENV=__NODE_ENV__
 Environment=PORT=4000
 Environment=NODE_PATH=/usr/local/lib/node_modules:/opt/nodejs/lib/node_modules
 EnvironmentFile=__PROJECT_ROOT__/apps/backend/.env
-ExecStart=/home/multitenant/.local/bin/pnpm run start:prod
+ExecStart=/usr/bin/pnpm run start:prod
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

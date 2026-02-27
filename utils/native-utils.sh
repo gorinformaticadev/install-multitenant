@@ -107,6 +107,12 @@ prepare_multitenant_environment() {
     if ! command -v pnpm &>/dev/null; then
         npm install -g pnpm --unsafe-perm
     fi
+    
+    # Garantir link em /usr/bin para o systemd
+    if [[ ! -f /usr/bin/pnpm ]]; then
+        local pnpm_path=$(command -v pnpm)
+        [[ -n "$pnpm_path" ]] && ln -sf "$pnpm_path" /usr/bin/pnpm
+    fi
 
     if ! sudo -u multitenant bash -lc 'command -v pnpm' >/dev/null 2>&1; then
         log_info "Instalando pnpm para o usuário multitenant..."
@@ -492,7 +498,15 @@ build_application() {
     # Build do backend
     log_info "Construindo backend (NestJS)..."
     cd "$PROJECT_ROOT/apps/backend"
+    # Limpar dist anterior se existir
+    rm -rf dist
     sudo -u multitenant bash -lc "NODE_ENV=$node_env pnpm run build"
+    
+    # Verificar se dist/main.js existe
+    if [[ ! -f "dist/main.js" ]]; then
+        log_error "Falha no build do backend: dist/main.js não encontrado."
+        return 1
+    fi
 
     # Build do frontend
     log_info "Construindo frontend (Next.js)..."
