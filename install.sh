@@ -88,6 +88,11 @@ run_install() {
         export IMAGE_OWNER GHCR_OWNER
     fi
 
+    # Exportar para que os sub-scripts vejam
+    export INSTALL_DOMAIN="$domain"
+    export LETSENCRYPT_EMAIL="$email"
+    export INSTALL_NO_PROMPT="$no_prompt"
+
     ensure_project_repository
 
     # Mostrar menu e obter modo selecionado

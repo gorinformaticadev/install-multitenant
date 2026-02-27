@@ -147,6 +147,11 @@ show_confirmation() {
     local domain="$1"
     local email="$2"
     
+    # Pular confirmação se estiver em modo não-interativo
+    if [[ "$INSTALL_NO_PROMPT" == "true" ]]; then
+        return 0
+    fi
+
     print_header "CONFIRMAÇÃO"
     
     local mode_description=""
@@ -265,6 +270,20 @@ show_installation_menu() {
     local domain="$1"
     local email="$2"
     
+    # Se estiver em modo não-interativo, definir modos padrão e pular menus
+    if [[ "$INSTALL_NO_PROMPT" == "true" ]]; then
+        # Se não houver seleção prévia (via argumentos futuros ou variáveis)
+        # Assumimos VPS Produção Nativo como padrão para automação se solicitado
+        # Mas aqui o usuário disse que ele seleciona 4 e depois 2.
+        # No modo não-interativo, precisamos que essas variáveis já venham preenchidas.
+        # Se não vierem, podemos forçar para o fluxo que o usuário quer automatizar.
+        SELECTED_ENVIRONMENT="${SELECTED_ENVIRONMENT:-vps-prod}"
+        SELECTED_METHOD="${SELECTED_METHOD:-native}"
+        determine_installation_mode
+        show_confirmation "$domain" "$email"
+        return 0
+    fi
+
     print_header "INSTALADOR MULTITENANT - Seleção de Modo"
     
     echo -e "\033[1;36mDomínio:\033[0m $domain"

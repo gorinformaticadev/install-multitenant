@@ -32,27 +32,22 @@ run_native_vps_prod() {
         local current_branch=$(git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null)
         if [[ -n "$current_branch" ]] && [[ "$current_branch" != "main" && "$current_branch" != "master" ]]; then
             log_warn "Branch atual: $current_branch (recomendado: main ou master)"
-            if ! confirm_action "Deseja continuar mesmo assim?" "n"; then
-                log_error "Instalacao cancelada. Mude para branch main primeiro."
-                exit 1
+            if [[ "$INSTALL_NO_PROMPT" != "true" ]]; then
+                if ! confirm_action "Deseja continuar mesmo assim?" "n"; then
+                    log_error "Instalacao cancelada. Mude para branch main primeiro."
+                    exit 1
+                fi
+            else
+                log_info "Modo não-interativo: Continuando com branch atual."
             fi
         fi
     fi
 
-    # --- Perguntar credenciais ---
+    # --- Credenciais do Admin ---
     local admin_email="${INSTALL_ADMIN_EMAIL:-$email}"
-    local admin_pass="${INSTALL_ADMIN_PASSWORD:-}"
+    local admin_pass="${INSTALL_ADMIN_PASSWORD:-123456}"
 
-    if [[ "$INSTALL_NO_PROMPT" != "true" ]]; then
-        [[ -z "$admin_email" ]] && admin_email="$email"
-        read -sp "Senha inicial do admin [123456]: " admin_pass
-        echo
-        admin_pass="${admin_pass:-123456}"
-    else
-        admin_pass="${admin_pass:-123456}"
-    fi
-
-    # --- Gerar credenciais ---
+    # --- Gerar credenciais do Banco e Secrets ---
     local domain_prefix=$(echo "$domain" | tr -cd '[:alnum:]' | cut -c1-16 | tr '[:upper:]' '[:lower:]')
     local db_name="${DB_NAME:-db_${domain_prefix}}"
     local db_user="${DB_USER:-us_${domain_prefix}}"

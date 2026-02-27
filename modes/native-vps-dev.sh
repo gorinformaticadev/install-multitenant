@@ -31,25 +31,20 @@ run_native_vps_dev() {
         local current_branch=$(git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null)
         if [[ -n "$current_branch" ]] && [[ "$current_branch" != "dev" ]]; then
             log_warn "Branch atual: $current_branch (recomendado: dev)"
-            if ! confirm_action "Deseja continuar mesmo assim?" "n"; then
-                log_error "Instalacao cancelada. Mude para branch dev primeiro."
-                exit 1
+            if [[ "$INSTALL_NO_PROMPT" != "true" ]]; then
+                if ! confirm_action "Deseja continuar mesmo assim?" "n"; then
+                    log_error "Instalacao cancelada. Mude para branch dev primeiro."
+                    exit 1
+                fi
+            else
+                log_info "Modo não-interativo: Continuando com branch atual."
             fi
         fi
     fi
 
-    # --- Perguntar credenciais ---
+    # --- Credenciais do Admin ---
     local admin_email="${INSTALL_ADMIN_EMAIL:-$email}"
-    local admin_pass="${INSTALL_ADMIN_PASSWORD:-}"
-
-    if [[ "$INSTALL_NO_PROMPT" != "true" ]]; then
-        [[ -z "$admin_email" ]] && admin_email="$email"
-        read -sp "Senha inicial do admin [123456]: " admin_pass
-        echo
-        admin_pass="${admin_pass:-123456}"
-    else
-        admin_pass="${admin_pass:-123456}"
-    fi
+    local admin_pass="${INSTALL_ADMIN_PASSWORD:-123456}"
 
     # --- Gerar credenciais ---
     local domain_prefix=$(echo "$domain" | tr -cd '[:alnum:]' | cut -c1-16 | tr '[:upper:]' '[:lower:]')

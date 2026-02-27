@@ -127,16 +127,11 @@ upsert_env() {
     fi
     
     if grep -q "^${key}=" "$file" 2>/dev/null; then
-        local tmpfile
-        tmpfile="$(mktemp)"
-        while IFS= read -r line; do
-            if [[ "$line" == "${key}="* ]]; then
-                echo "${key}=${value}"
-            else
-                echo "$line"
-            fi
-        done < "$file" > "$tmpfile"
-        mv "$tmpfile" "$file"
+        # Usar sed para substituir mantendo a ordem, lidando com caracteres especiais
+
+        # Escapar caracteres especiais para o sed (& e /)
+        local escaped_value=$(echo "$value" | sed 's/[\/&]/\\&/g')
+        sed -i "s/^${key}=.*/${key}=${escaped_value}/" "$file"
     else
         echo "${key}=${value}" >> "$file"
     fi

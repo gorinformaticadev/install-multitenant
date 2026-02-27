@@ -79,25 +79,45 @@ setup_directories() {
 prepare_multitenant_environment() {
     log_info "Preparando ambiente do usuário multitenant..."
     
-    # Garantir que os diretórios de configuração do npm/pnpm existam
-    sudo -u multitenant sh -c 'mkdir -p ~/.npm ~/.pnpm-store ~/.config'
+    # Garantir que os diretórios de configuração existam
+    sudo -u multitenant mkdir -p /home/multitenant/.npm /home/multitenant/.pnpm-store /home/multitenant/.config /home/multitenant/.local/bin 2>/dev/null || true
     
-    # Garantir que os comandos node e npm estejam disponíveis
-    if ! sudo -u multitenant sh -c 'which node >/dev/null'; then
+    # Criar links simbólicos para Node.js, npm e npx no bin do usuário
+    log_info "Criando links simbólicos para Node.js..."
+    sudo -u multitenant ln -sf /usr/bin/node /home/multitenant/.local/bin/node 2>/dev/null || true
+    sudo -u multitenant ln -sf /usr/bin/npm /home/multitenant/.local/bin/npm 2>/dev/null || true
+    sudo -u multitenant ln -sf /usr/bin/npx /home/multitenant/.local/bin/npx 2>/dev/null || true
+    
+    # Adicionar .local/bin ao PATH permanentemente no .bashrc e .profile do usuário
+    if ! sudo -u multitenant grep -q "export PATH.*\.local/bin" /home/multitenant/.bashrc 2>/dev/null; then
+        sudo -u multitenant bash -c 'echo "export PATH=\"\$HOME/.local/bin:/usr/bin:\$PATH\"" >> ~/.bashrc'
+    fi
+    
+    if ! sudo -u multitenant grep -q "export PATH.*\.local/bin" /home/multitenant/.profile 2>/dev/null; then
+        sudo -u multitenant bash -c 'echo "export PATH=\"\$HOME/.local/bin:/usr/bin:\$PATH\"" >> ~/.profile'
+    fi
+    
+    # Verificar se Node.js está acessível
+    if ! sudo -u multitenant bash -lc 'command -v node' >/dev/null 2>&1; then
         log_error "Node.js não está disponível para o usuário multitenant"
         return 1
     fi
     
-    if ! sudo -u multitenant sh -c 'which npm >/dev/null'; then
-        log_error "npm não está disponível para o usuário multitenant"
-        return 1
+    # Instalar ou verificar pnpm globalmente e no usuário
+    if ! command -v pnpm &>/dev/null; then
+        npm install -g pnpm
     fi
-    
-    if ! sudo -u multitenant sh -c 'which pnpm >/dev/null'; then
-        log_error "pnpm não está disponível para o usuário multitenant"
-        # Tentar instalar pnpm para o usuário multitenant
-        log_info "Tentando instalar pnpm para o usuário multitenant..."
-        sudo -u multitenant sh -c 'npm install -g pnpm' 2>/dev/null || true
+
+    if ! sudo -u multitenant bash -lc 'command -v pnpm' >/dev/null 2>&1; then
+        log_info "Instalando pnpm para o usuário multitenant..."
+        sudo -u multitenant bash -lc 'npm install -g pnpm' 2>/dev/null || true
+        
+        # Link simbólico se necessário
+        if [[ -f /usr/local/bin/pnpm ]]; then
+            sudo -u multitenant ln -sf /usr/local/bin/pnpm /home/multitenant/.local/bin/pnpm 2>/dev/null || true
+        elif [[ -f /usr/bin/pnpm ]]; then
+            sudo -u multitenant ln -sf /usr/bin/pnpm /home/multitenant/.local/bin/pnpm 2>/dev/null || true
+        fi
     fi
     
     log_success "Ambiente do usuário multitenant preparado."
@@ -148,13 +168,7 @@ install_nodejs() {
     if ! command -v pnpm &>/dev/null; then
         log_info "Instalando pnpm..."
         npm install -g pnpm
-        # Garantir que o usuário multitenant também tenha acesso ao pnpm
-        sudo -u multitenant sh -c 'npm install -g pnpm' 2>/dev/null || true
         log_success "pnpm instalado: $(pnpm --version)"
-    else
-        log_info "pnpm ja instalado: $(pnpm --version)"
-        # Garantir que o usuário multitenant também tenha acesso ao pnpm
-        sudo -u multitenant sh -c 'npm install -g pnpm' 2>/dev/null || true
     fi
 }
 
@@ -282,81 +296,29 @@ install_pm2() {
     npm install -g pm2
     
     # Garantir que o usuário multitenant também tenha acesso ao PM2
-    sudo -u multitenant sh -c 'npm install -g pm2' 2>/dev/null || true
+    sudo -u multitenant sh -lc 'npm install -g pm2' 2>/dev/null || true
 
     # Configurar PM2 para iniciar no boot
-    pm2 startup systemd -u multitenant --hp /home/multitenant 2>/dev/null || true
+    sudo -u multitenant pm2 startup systemd -u multitenant --hp /home/multitenant 2>/dev/null || true
 
-    log_success "PM2 instalado: $(pm2 --version)"
+    log_success "PM2 instalado."
 }
 
 # =============================================================================
 # Nginx
 # =============================================================================
 
-check_nginx() {
-    if command -v nginx &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null; then
-        log_info "Nginx ja instalado e rodando."
-        return 0
-    fi
-    return 1
-}
-
 install_nginx() {
-    if check_nginx; then
+    if command -v nginx &>/dev/null; then
+        log_info "Nginx ja instalado."
         return 0
     fi
 
     log_info "Instalando Nginx..."
-
     apt-get install -y -qq nginx
-
     systemctl start nginx
     systemctl enable nginx
-
-    log_success "Nginx instalado: $(nginx -v 2>&1 | grep -oP 'nginx/\K.*')"
-}
-
-check_and_open_ports_native() {
-    log_info "Verificando portas 80 e 443 para validacao do Let's Encrypt..."
-
-    if ! command -v netstat &>/dev/null; then
-        apt-get install -y -qq net-tools >/dev/null 2>&1 || true
-    fi
-
-    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-        log_info "UFW detectado. Liberando portas 80 e 443..."
-        ufw allow 80/tcp >/dev/null 2>&1 || true
-        ufw allow 443/tcp >/dev/null 2>&1 || true
-        log_info "Portas 80/443 liberadas no UFW."
-    fi
-
-    if command -v iptables &>/dev/null; then
-        if iptables -L INPUT -n 2>/dev/null | grep -q "DROP\|REJECT"; then
-            log_warn "Detectadas regras de firewall (iptables). Garanta que 80/443 estejam liberadas."
-        fi
-    fi
-
-    if command -v netstat &>/dev/null; then
-        if netstat -tlnp 2>/dev/null | grep -q ":80 "; then
-            local port80_process
-            port80_process=$(netstat -tlnp 2>/dev/null | grep ":80 " | awk '{print $7}' | head -1)
-            log_info "Porta 80 em uso por: $port80_process"
-        else
-            log_warn "Nenhum processo local ouvindo na porta 80."
-            log_warn "Sem HTTP ativo, o desafio ACME via webroot vai falhar."
-        fi
-
-        if netstat -tlnp 2>/dev/null | grep -q ":443 "; then
-            local port443_process
-            port443_process=$(netstat -tlnp 2>/dev/null | grep ":443 " | awk '{print $7}' | head -1)
-            log_info "Porta 443 em uso por: $port443_process"
-        else
-            log_warn "Nenhum processo local ouvindo na porta 443."
-        fi
-    fi
-
-    log_info "Verificacao de portas finalizada."
+    log_success "Nginx instalado e rodando."
 }
 
 configure_nginx_native() {
@@ -366,186 +328,93 @@ configure_nginx_native() {
 
     log_info "Configurando Nginx para $domain..."
 
-    local template="$TEMPLATES_DIR/nginx/nginx-native.conf.template"
-    local target="/etc/nginx/sites-available/multitenant"
-    local link="/etc/nginx/sites-enabled/multitenant"
+    local tpl="$TEMPLATES_DIR/nginx/nginx-native.conf.template"
+    local dest="/etc/nginx/sites-available/multitenant"
 
-    if [[ ! -f "$template" ]]; then
-        log_error "Template nginx nao encontrado: $template"
+    if [[ ! -f "$tpl" ]]; then
+        log_error "Template Nginx nao encontrado: $tpl"
         return 1
     fi
 
-    # Substituir placeholders
     sed -e "s|__DOMAIN__|$domain|g" \
         -e "s|__SSL_CERT__|$ssl_cert|g" \
         -e "s|__SSL_KEY__|$ssl_key|g" \
-        "$template" > "$target"
+        "$tpl" > "$dest"
 
-    # Ativar site e desativar default
-    ln -sf "$target" "$link"
-    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+    ln -sf "$dest" /etc/nginx/sites-enabled/default
+    ln -sf "$dest" /etc/nginx/sites-enabled/multitenant 2>/dev/null || true
 
-    # Testar configuracao
-    if nginx -t 2>/dev/null; then
+    if nginx -t >/dev/null 2>&1; then
         systemctl reload nginx
-        log_success "Nginx configurado para $domain"
+        log_success "Nginx configurado com sucesso."
     else
-        log_error "Configuracao do Nginx invalida. Verifique: $target"
-        nginx -t
+        log_error "Erro na configuracao do Nginx. Verifique com 'nginx -t'."
         return 1
     fi
 }
 
 # =============================================================================
-# Certbot (SSL Let's Encrypt)
+# Certbot / SSL
 # =============================================================================
 
-check_certbot() {
-    if command -v certbot &>/dev/null; then
-        local certbot_version
-        certbot_version="$(certbot --version 2>/dev/null | head -1 || true)"
-        log_info "Certbot ja instalado: ${certbot_version:-versao desconhecida}"
-        return 0
-    fi
-    return 1
-}
-
 install_certbot() {
-    if check_certbot; then
-        if certbot --help all 2>/dev/null | grep -q "tls-alpn-01"; then
-            return 0
-        fi
-        log_warn "Certbot atual sem suporte TLS-ALPN-01. Tentando atualizar para versao mais nova..."
+    if command -v certbot &>/dev/null; then
+        log_info "Certbot ja instalado."
+        return 0
     fi
 
     log_info "Instalando Certbot..."
-
-    # Preferir instalacao via snap para obter versao mais atual e melhor suporte de desafios.
-    if command -v snap &>/dev/null || apt-get install -y -qq snapd; then
-        systemctl enable --now snapd.socket 2>/dev/null || true
-        systemctl enable --now snapd.service 2>/dev/null || true
-        ln -sf /var/lib/snapd/snap /snap 2>/dev/null || true
-
-        snap install core >/dev/null 2>&1 || true
-        snap refresh core >/dev/null 2>&1 || true
-        snap install --classic certbot >/dev/null 2>&1 || true
-        ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
-    fi
-
-    # Fallback apt para ambientes sem snap.
-    if ! command -v certbot &>/dev/null; then
-        apt-get install -y -qq certbot python3-certbot-nginx
-    fi
-
-    if command -v certbot &>/dev/null; then
-        local certbot_version
-        certbot_version="$(certbot --version 2>/dev/null | head -1 || true)"
-        log_success "Certbot instalado: ${certbot_version:-versao desconhecida}"
-        return 0
-    fi
-
-    log_error "Falha ao instalar Certbot."
-    return 1
+    apt-get install -y -qq certbot python3-certbot-nginx
+    log_success "Certbot instalado."
 }
 
 obtain_native_ssl_cert() {
     local domain="$1"
     local email="$2"
-    local acme_dir="$CERTBOT_WEBROOT/.well-known/acme-challenge"
-    local acme_probe="multitenant-acme-probe-$(date +%s)"
-    local acme_file="$acme_dir/$acme_probe"
 
-    log_info "Obtendo certificado SSL para $domain via Certbot..."
-    check_and_open_ports_native
+    log_info "Tentando obter certificado Let's Encrypt para $domain..."
 
-    mkdir -p "$acme_dir"
-    echo "ok-$acme_probe" > "$acme_file"
-    chmod 644 "$acme_file" 2>/dev/null || true
-
-    # Preflight local: garante que o Nginx serve o webroot ACME corretamente.
-    if command -v curl &>/dev/null; then
-        if curl -fsS -H "Host: $domain" "http://127.0.0.1/.well-known/acme-challenge/$acme_probe" >/dev/null 2>&1; then
-            log_info "Preflight ACME local OK (Nginx webroot acessivel)."
-        else
-            log_warn "Preflight ACME local falhou."
-            log_warn "Revise o location /.well-known/acme-challenge/ no Nginx e recarregue o servico."
-        fi
+    # Verificar se ja existe
+    if [[ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]]; then
+        log_info "Certificado ja existe para $domain"
+        return 0
     fi
 
-    # Testar com staging primeiro
-    log_info "Testando com Let's Encrypt staging..."
-    if certbot certonly --webroot \
-        -w "$CERTBOT_WEBROOT" \
+    # Desafio webroot (Nginx deve estar rodando e servindo /.well-known/acme-challenge/)
+    mkdir -p "$CERTBOT_WEBROOT"
+    
+    # Criar um arquivo de teste para verificar se o Nginx esta servindo o webroot
+    local acme_file="$CERTBOT_WEBROOT/test.txt"
+    echo "ACME-TEST" > "$acme_file"
+    
+    # Tentar obter via webroot
+    if certbot certonly --webroot -w "$CERTBOT_WEBROOT" \
         -d "$domain" \
         --email "$email" \
         --agree-tos \
-        --test-cert \
-        --non-interactive; then
-
-        log_info "Staging OK. Obtendo certificado real..."
-        certbot certonly --webroot \
-            -w "$CERTBOT_WEBROOT" \
-            -d "$domain" \
-            --email "$email" \
-            --agree-tos \
-            --force-renewal \
-            --non-interactive
-
-        local cert_path="/etc/letsencrypt/live/$domain/fullchain.pem"
-        local key_path="/etc/letsencrypt/live/$domain/privkey.pem"
-
-        if [[ -f "$cert_path" ]] && [[ -f "$key_path" ]]; then
-            log_success "Certificado Let's Encrypt obtido para $domain"
-            rm -f "$acme_file" 2>/dev/null || true
-            echo "$cert_path"
-            return 0
-        fi
+        --non-interactive \
+        --quiet; then
+        
+        log_success "Certificado Let's Encrypt obtido com sucesso para $domain"
+        rm -f "$acme_file"
+        return 0
     fi
 
-    rm -f "$acme_file" 2>/dev/null || true
-
-    # Fallback quando a porta 80 esta bloqueada externamente:
-    # usar standalone + tls-alpn-01 (porta 443), se suportado pela versao do certbot.
-    if certbot --help all 2>/dev/null | grep -q "tls-alpn-01"; then
-        log_warn "Falha no desafio HTTP-01 (webroot). Tentando fallback TLS-ALPN-01 na porta 443..."
-        if certbot certonly --standalone \
-            --preferred-challenges tls-alpn-01 \
-            -d "$domain" \
-            --email "$email" \
-            --agree-tos \
-            --test-cert \
-            --non-interactive \
-            --pre-hook "systemctl stop nginx" \
-            --post-hook "systemctl start nginx"; then
-
-            log_info "Fallback TLS-ALPN staging OK. Obtendo certificado real..."
-            certbot certonly --standalone \
-                --preferred-challenges tls-alpn-01 \
-                -d "$domain" \
-                --email "$email" \
-                --agree-tos \
-                --force-renewal \
-                --non-interactive \
-                --pre-hook "systemctl stop nginx" \
-                --post-hook "systemctl start nginx"
-
-            local cert_path_fallback="/etc/letsencrypt/live/$domain/fullchain.pem"
-            local key_path_fallback="/etc/letsencrypt/live/$domain/privkey.pem"
-            if [[ -f "$cert_path_fallback" ]] && [[ -f "$key_path_fallback" ]]; then
-                log_success "Certificado Let's Encrypt obtido via TLS-ALPN-01 para $domain"
-                rm -f "$acme_file" 2>/dev/null || true
-                echo "$cert_path_fallback"
-                return 0
-            fi
-        fi
-    else
-        log_warn "Este certbot nao suporta TLS-ALPN-01 nesta instalacao."
+    log_warn "Falha ao obter certificado via webroot. Tentando via plugin Nginx..."
+    
+    if certbot certonly --nginx \
+        -d "$domain" \
+        --email "$email" \
+        --agree-tos \
+        --non-interactive \
+        --quiet; then
+        
+        log_success "Certificado Let's Encrypt obtido com sucesso via plugin Nginx."
+        rm -f "$acme_file"
+        return 0
     fi
 
-    log_warn "Nao foi possivel obter certificado Let's Encrypt."
-    log_warn "HTTP-01 falhou e o fallback automatico nao foi possivel."
-    log_warn "Opcao imediata: emitir por DNS-01 manual:"
-    log_warn "certbot certonly --manual --preferred-challenges dns -d $domain -m $email --agree-tos"
+    rm -f "$acme_file"
     return 1
 }
 
@@ -569,21 +438,14 @@ generate_self_signed_cert() {
     log_success "Certificado autoassinado criado em $cert_dir/"
 }
 
-# =============================================================================
-# Configuracao de autorenew do SSL
-# =============================================================================
-
 setup_certbot_renewal() {
     log_info "Configurando renovacao automatica do certificado..."
-
-    # Certbot ja instala um timer systemd, mas verificar
     if systemctl is-enabled certbot.timer &>/dev/null; then
         log_info "Timer de renovacao do Certbot ja ativo."
     else
         systemctl enable --now certbot.timer 2>/dev/null || true
     fi
 
-    # Adicionar hook para recarregar nginx apos renovacao
     local hook_dir="/etc/letsencrypt/renewal-hooks/deploy"
     mkdir -p "$hook_dir"
     cat > "$hook_dir/reload-nginx.sh" << 'HOOK'
@@ -591,7 +453,6 @@ setup_certbot_renewal() {
 systemctl reload nginx
 HOOK
     chmod +x "$hook_dir/reload-nginx.sh"
-
     log_success "Renovacao automatica de SSL configurada."
 }
 
@@ -604,92 +465,31 @@ build_application() {
 
     log_info "Instalando dependencias do projeto (pnpm install)..."
     
-    # Preparar ambiente do usuário multitenant
     prepare_multitenant_environment
     
-    # Garantir que o diretório do projeto tem as permissões corretas antes de instalar
     chown -R multitenant:multitenant "$PROJECT_ROOT"
     chmod -R 755 "$PROJECT_ROOT"
     
-    # Verificar se o usuário multitenant pode acessar o diretório do projeto
-    if ! sudo -u multitenant test -r "$PROJECT_ROOT"; then
-        log_warn "Usuário multitenant não tem permissão de leitura no diretório do projeto"
-        log_info "Verificando permissões dos diretórios pai..."
-        
-        # Garantir que todos os diretórios no caminho tenham permissão de execução (x) 
-        # para que possam ser atravessados pelo usuário multitenant
-        local current_path="/"
-        IFS='/' read -ra path_parts <<< "${PROJECT_ROOT#/}"
-        for part in "${path_parts[@]}"; do
-            if [[ -n "$part" ]]; then
-                current_path="$current_path$part"
-                # Garantir que o diretório tenha permissão de leitura e execução
-                chmod 755 "$current_path" 2>/dev/null || true
-                current_path="$current_path/"
-            fi
-        done
-        
-        # Tenta novamente após ajustar permissões
-        if ! sudo -u multitenant test -r "$PROJECT_ROOT"; then
-            log_warn "Usuário multitenant ainda não tem permissão de leitura no diretório do projeto"
-            log_warn "Executando pnpm install como root e ajustando permissões posteriormente..."
-            
-            cd "$PROJECT_ROOT"
-            
-            # Instalar dependencias como root e depois ajustar permissões
-            log_info "Executando pnpm install como root..."
-            if ! pnpm install --frozen-lockfile 2>/dev/null; then
-                log_warn "Falha com --frozen-lockfile, tentando instalação normal..."
-                if ! pnpm install 2>/dev/null; then
-                    log_error "Falha ao executar pnpm install como root"
-                    return 1
-                fi
-            fi
-            
-            # Ajustar permissões após instalação
-            chown -R multitenant:multitenant "$PROJECT_ROOT/node_modules" 2>/dev/null || true
-            chown -R multitenant:multitenant "$PROJECT_ROOT/pnpm-lock.yaml" 2>/dev/null || true
-            chown -R multitenant:multitenant "$PROJECT_ROOT/package.json" 2>/dev/null || true
-            chown -R multitenant:multitenant "$PROJECT_ROOT/apps" 2>/dev/null || true
-        else
-            cd "$PROJECT_ROOT"
-            # Instalar dependencias como usuário multitenant
-            log_info "Executando pnpm install como usuário multitenant..."
-            if ! sudo -u multitenant pnpm install --frozen-lockfile 2>/dev/null; then
-                log_warn "Falha com --frozen-lockfile, tentando instalação normal..."
-                if ! sudo -u multitenant pnpm install 2>/dev/null; then
-                    log_error "Falha ao executar pnpm install como usuário multitenant"
-                    return 1
-                fi
-            fi
-        fi
-    else
-        cd "$PROJECT_ROOT"
-        # Instalar dependencias como usuário multitenant
-        log_info "Executando pnpm install como usuário multitenant..."
-        if ! sudo -u multitenant pnpm install --frozen-lockfile 2>/dev/null; then
-            log_warn "Falha com --frozen-lockfile, tentando instalação normal..."
-            if ! sudo -u multitenant pnpm install 2>/dev/null; then
-                log_error "Falha ao executar pnpm install como usuário multitenant"
-                return 1
-            fi
-        fi
-    fi
-
+    cd "$PROJECT_ROOT"
+    
+    # Instalar dependencias
+    log_info "Executando pnpm install..."
+    sudo -u multitenant bash -lc 'pnpm install'
+    
     # Gerar Prisma Client
     log_info "Gerando Prisma Client..."
     cd "$PROJECT_ROOT/apps/backend"
-    sudo -u multitenant pnpm exec prisma generate
+    sudo -u multitenant bash -lc 'pnpm exec prisma generate'
 
     # Build do backend
     log_info "Construindo backend (NestJS)..."
     cd "$PROJECT_ROOT/apps/backend"
-    sudo -u multitenant NODE_ENV="$node_env" pnpm run build
+    sudo -u multitenant bash -lc "NODE_ENV=$node_env pnpm run build"
 
     # Build do frontend
     log_info "Construindo frontend (Next.js)..."
     cd "$PROJECT_ROOT/apps/frontend"
-    sudo -u multitenant NODE_ENV="$node_env" pnpm run build
+    sudo -u multitenant bash -lc "NODE_ENV=$node_env pnpm run build"
 
     cd "$PROJECT_ROOT"
     log_success "Build da aplicacao concluido."
@@ -720,7 +520,6 @@ configure_backend_env() {
         touch "$env_file"
     fi
 
-    # Host local: PostgreSQL roda em localhost, nao em container
     upsert_env "DATABASE_URL" "postgresql://$db_user:$db_pass@localhost:5432/$db_name?schema=public" "$env_file"
     upsert_env "JWT_SECRET" "$jwt_secret" "$env_file"
     upsert_env "ENCRYPTION_KEY" "$enc_key" "$env_file"
@@ -733,10 +532,8 @@ configure_backend_env() {
     upsert_env "INSTALL_ADMIN_PASSWORD" "$admin_pass" "$env_file"
     upsert_env "REQUIRE_SECRET_MANAGER" "false" "$env_file"
 
-    # Ajustar permissao
     chown multitenant:multitenant "$env_file"
     chmod 600 "$env_file"
-
     log_success "Backend .env configurado."
 }
 
@@ -757,7 +554,6 @@ configure_frontend_env() {
 
     chown multitenant:multitenant "$env_file"
     chmod 600 "$env_file"
-
     log_success "Frontend .env.local configurado."
 }
 
@@ -769,298 +565,69 @@ run_migrations() {
     log_info "Executando migrations do Prisma..."
     cd "$PROJECT_ROOT/apps/backend"
     
-    # Antes de executar as migrations, gerar novamente o Prisma Client
-    log_info "Garantindo que o Prisma Client esteja atualizado..."
-    sudo -u multitenant pnpm exec prisma generate 2>/dev/null || true
-    
-    # Primeira tentativa de executar as migrations
-    if ! sudo -u multitenant pnpm exec prisma migrate deploy 2>&1; then
-        log_warn "Falha na aplicação das migrations. Verificando situação..."
-        
-        # Verificar o status das migrations
-        log_info "Verificando status das migrations..."
-        sudo -u multitenant pnpm exec prisma migrate status 2>&1 || true
-        
-        # Verificar se há migrações com falha e tentar resolver
-        log_info "Verificando migrações com falha..."
-        
-        # Tenta resolver o problema de migrations com falha
-        log_info "Tentando resolver problema de migrations com falha (P3009)..."
-        
-        # Primeiro, tenta verificar se o banco está em estado inconsistente
-        log_info "Resetando banco de dados para limpar estado inconsistente..."
-        if sudo -u multitenant pnpm exec prisma migrate reset --force 2>/dev/null; then
-            log_info "Banco de dados resetado com sucesso. Aplicando migrations novamente..."
-        else
-            log_warn "Não foi possível resetar as migrations. Verificando se o banco está vazio..."
-            
-            # Se o reset falhar, verificar se o banco está completamente vazio
-            # Nesse caso, podemos tentar aplicar as migrations do zero
-            if sudo -u multitenant pnpm exec prisma migrate resolve --applied 2>/dev/null; then
-                log_info "Estado de migrações resolvido. Tentando aplicar novamente..."
-            else
-                log_warn "Não foi possível resolver o estado das migrations automaticamente."
-                
-                # Como último recurso, tentar um reset completo
-                log_info "Forçando reset completo do banco de dados..."
-                sudo -u multitenant pnpm exec prisma migrate reset --force <<< "y" 2>/dev/null || true
-            fi
-        fi
-        
-        # Tentar aplicar novamente
-        if ! sudo -u multitenant pnpm exec prisma migrate deploy 2>&1; then
-            log_error "Falha crítica ao aplicar migrations. O banco de dados pode estar em estado inconsistente."
-            log_error "Tentando uma abordagem alternativa..."
-                
-            # Verificar se o erro está relacionado à migração específica com nome de tabela incorreto
-            log_info "Verificando se o erro é causado pela migração com nome de tabela incorreto..."
-                
-            # Tentar uma abordagem alternativa: marcar todas as migrações como aplicadas se for uma instalação limpa
-            log_info "Verificando se é uma instalação limpa (banco vazio)..."
-                    
-            # Obter as variáveis do banco de dados do arquivo .env
-            local db_url=$(sudo -u multitenant grep "^DATABASE_URL=" "$PROJECT_ROOT/apps/backend/.env" | cut -d'=' -f2-)
-            local db_name=$(echo "$db_url" | sed -n 's/.*\/\([^?]*\).*/\1/p')
-                    
-            if sudo -u multitenant psql -d "$db_name" -tAc "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public');" 2>/dev/null | grep -q "f"; then
-                # Banco está vazio, tentar aplicar migrations do zero
-                log_info "Banco está vazio, tentando aplicar migrations do zero..."
-                if ! sudo -u multitenant pnpm exec prisma migrate deploy 2>&1; then
-                    log_warn "Erro persiste. Verificando se é o problema conhecido de nome de tabela..."
-                            
-                    # Se o erro for o problema conhecido com a tabela SecurityConfig, tentar criar a tabela manualmente
-                    log_info "Tentando criar estrutura inicial do security_config se necessário..."
-                    sudo -u multitenant pnpm exec prisma migrate resolve --applied 20260222000000_update_rate_limit_defaults 2>/dev/null || true
-                            
-                    # Tentar aplicar novamente
-                    if ! sudo -u multitenant pnpm exec prisma migrate deploy 2>&1; then
-                        log_error "Falha ao aplicar migrations mesmo com banco vazio."
-                        return 1
-                    fi
-                fi
-            else
-                log_warn "O banco de dados contém tabelas existentes, mas as migrations estão em estado inconsistente."
-                        
-                # Para o erro específico com a tabela SecurityConfig, tentar resolver manualmente
-                log_info "Tentando resolver migração problemática manualmente..."
-                        
-                # Verificar se a tabela security_config existe
-                table_exists=$(sudo -u multitenant psql -d "$db_name" -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'security_config');")
-                        
-                if [[ "$table_exists" == "t" ]]; then
-                    # A tabela existe, então a migração inicial já foi aplicada
-                    # Marcar a migração problemática como resolvida
-                    log_info "Tabela security_config existe, marcando migração problemática como resolvida..."
-                    sudo -u multitenant pnpm exec prisma migrate resolve --applied 20260222000000_update_rate_limit_defaults 2>/dev/null || true
-                else
-                    # A tabela não existe, talvez seja necessário aplicar as migrações iniciais primeiro
-                    log_info "Tabela security_config não existe, aplicando migrations iniciais..."
-                fi
-                        
-                # Tentar aplicar novamente
-                if ! sudo -u multitenant pnpm exec prisma migrate deploy 2>&1; then
-                    log_error "Falha ao aplicar migrations mesmo após tentativas de resolução."
-                    return 1
-                fi
-            fi
-        fi
-    fi
-    
+    sudo -u multitenant bash -lc 'pnpm exec prisma migrate deploy'
     log_success "Migrations aplicadas."
 }
 
 run_seeds() {
     log_info "Populando banco de dados (seed)..."
     cd "$PROJECT_ROOT/apps/backend"
-    local seed_expected="dist/prisma/seed.js"
-    local seed_alternative="dist/prisma/prisma/seed.js"
-
-    # Tentar o seed padrao do Prisma primeiro.
-    # O proprio comando usa a configuracao de seed do projeto.
-    if sudo -u multitenant pnpm exec prisma db seed; then
+    
+    if sudo -u multitenant bash -lc 'pnpm exec prisma db seed'; then
         log_success "Seed executado com sucesso."
-        return 0
-    fi
-
-    # Fallback: compilar seed.ts manualmente se o artefato nao existir.
-    if [[ ! -f "$seed_expected" ]]; then
-        log_warn "prisma db seed falhou e $seed_expected nao existe. Compilando seed.ts..."
-        if ! sudo -u multitenant pnpm exec tsc prisma/seed.ts \
-            --outDir dist/prisma \
-            --rootDir prisma \
-            --skipLibCheck \
-            --module commonjs \
-            --target ES2021 \
-            --esModuleInterop \
-            --resolveJsonModule; then
-            log_error "Falha ao compilar seed.ts para dist/prisma/seed.js com pnpm exec tsc"
-            log_error "Verifique se o pacote 'typescript' esta instalado no workspace."
-            return 1
+    else
+        log_warn "Seed via pnpm falhou, tentando via node direto..."
+        if [[ -f "dist/prisma/seed.js" ]]; then
+            sudo -u multitenant bash -lc 'node dist/prisma/seed.js'
+            log_success "Seed executado via node."
+        else
+            log_error "Nao foi possivel executar o seed."
         fi
     fi
-
-    # Algumas configuracoes de tsconfig podem gerar dist/prisma/prisma/seed.js.
-    # Normalizar para o caminho esperado pelo comando de seed do Prisma.
-    if [[ ! -f "$seed_expected" ]] && [[ -f "$seed_alternative" ]]; then
-        mkdir -p dist/prisma
-        cp "$seed_alternative" "$seed_expected"
-    fi
-
-    log_warn "Falha no prisma db seed. Tentando executar seed compilado diretamente..."
-    if [[ ! -f "$seed_expected" ]]; then
-        log_error "Seed compilado nao encontrado em $seed_expected"
-        return 1
-    fi
-
-    if sudo -u multitenant node "$seed_expected"; then
-        log_success "Seed executado com sucesso (modo direto)."
-        return 0
-    fi
-
-    log_error "Seed falhou. Corrija o erro acima e execute: cd apps/backend && pnpm exec prisma db seed"
-    return 1
 }
 
 # =============================================================================
-# Gerenciamento de processos (systemd ou PM2)
+# Gerenciamento de processos (systemd)
 # =============================================================================
 
 setup_systemd_services() {
     local node_env="$1"
-
     log_info "Instalando servicos systemd..."
 
     local backend_tpl="$TEMPLATES_DIR/systemd/multitenant-backend.service"
     local frontend_tpl="$TEMPLATES_DIR/systemd/multitenant-frontend.service"
 
-    if [[ ! -f "$backend_tpl" ]] || [[ ! -f "$frontend_tpl" ]]; then
-        log_error "Templates systemd nao encontrados em $TEMPLATES_DIR/systemd/"
-        return 1
-    fi
-
-    # Backend service
     sed -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
         -e "s|__NODE_ENV__|$node_env|g" \
         "$backend_tpl" > /etc/systemd/system/multitenant-backend.service
 
-    # Frontend service
     sed -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
         -e "s|__NODE_ENV__|$node_env|g" \
         "$frontend_tpl" > /etc/systemd/system/multitenant-frontend.service
 
     systemctl daemon-reload
     systemctl enable multitenant-backend multitenant-frontend
-
     log_success "Servicos systemd instalados e habilitados."
-}
-
-# =============================================================================
-# Verificação de ambiente do usuário multitenant
-# =============================================================================
-
-check_multitenant_environment() {
-    log_info "Verificando ambiente do usuário multitenant..."
-
-    local has_error=0
-
-    # Verificar Node.js no contexto de shell do usuario multitenant
-    if sudo -u multitenant sh -lc 'command -v node >/dev/null 2>&1'; then
-        local node_version
-        node_version="$(sudo -u multitenant sh -lc 'node --version' 2>/dev/null || true)"
-        if [[ -n "$node_version" ]]; then
-            log_success "Node.js encontrado: $node_version"
-        else
-            log_error "Node.js encontrado no PATH, mas nao pode ser executado pelo usuario multitenant"
-            has_error=1
-        fi
-    else
-        log_error "Node.js nao esta disponivel para o usuario multitenant"
-        has_error=1
-    fi
-
-    # Verificar artefatos necessarios
-    if [[ ! -f "$PROJECT_ROOT/apps/backend/dist/main.js" ]]; then
-        log_error "Arquivo backend dist/main.js nao encontrado"
-        log_info "Certifique-se de que o build do backend foi concluido com sucesso"
-        has_error=1
-    else
-        log_success "Arquivo backend encontrado"
-    fi
-
-    # O frontend e iniciado com `next start`; o artefato esperado e `.next/BUILD_ID`
-    if [[ ! -f "$PROJECT_ROOT/apps/frontend/.next/BUILD_ID" ]]; then
-        log_error "Artefato do frontend nao encontrado: apps/frontend/.next/BUILD_ID"
-        log_info "Certifique-se de que o build do frontend foi concluido com sucesso"
-        has_error=1
-    else
-        log_success "Artefatos do frontend encontrados (.next/BUILD_ID)"
-    fi
-
-    return "$has_error"
 }
 
 start_systemd_services() {
     log_info "Iniciando servicos..."
-    
-    # Verificar ambiente do usuário multitenant antes de iniciar
-    if ! check_multitenant_environment; then
-        log_error "Ambiente invalido para iniciar servicos. Corrija os erros acima."
-        return 1
-    fi
-    
-    # Iniciar backend primeiro e aguardar um pouco
-    systemctl start multitenant-backend
-    sleep 8  # Aumentar o tempo para garantir que o backend suba
-    
-    # Verificar se o backend está realmente ativo antes de iniciar o frontend
-    local backend_attempts=0
-    local backend_max_attempts=10
-    while [[ $backend_attempts -lt $backend_max_attempts ]]; do
-        if systemctl is-active --quiet multitenant-backend; then
-            log_info "Backend iniciado com sucesso."
-            break
-        else
-            log_info "Aguardando backend iniciar... (${backend_attempts}/${backend_max_attempts})"
-            sleep 3
-            ((backend_attempts++))
-        fi
-    done
-    
-    # Iniciar frontend
-    systemctl start multitenant-frontend
-    sleep 5  # Tempo para o frontend subir
-    
-    # Verificar status
-    if systemctl is-active --quiet multitenant-backend; then
-        log_success "Backend rodando (systemd)."
-    else
-        log_error "Backend nao iniciou. Verifique: journalctl -u multitenant-backend"
-        log_info "Verificando logs do backend:"
-        journalctl -u multitenant-backend --no-pager -n 20 2>/dev/null || true
-    fi
-
-    if systemctl is-active --quiet multitenant-frontend; then
-        log_success "Frontend rodando (systemd)."
-    else
-        log_error "Frontend nao iniciou. Verifique: journalctl -u multitenant-frontend"
-        log_info "Verificando logs do frontend:"
-        journalctl -u multitenant-frontend --no-pager -n 20 2>/dev/null || true
-    fi
+    systemctl restart multitenant-backend
+    sleep 5
+    systemctl restart multitenant-frontend
+    log_success "Servicos reiniciados (systemd)."
 }
+
+# =============================================================================
+# PM2
+# =============================================================================
 
 setup_pm2_services() {
     local node_env="$1"
     local backend_instances="${2:-1}"
-
     log_info "Configurando PM2..."
-
     local pm2_tpl="$TEMPLATES_DIR/pm2/ecosystem.config.js"
     local pm2_dest="$PROJECT_ROOT/ecosystem.config.js"
-
-    if [[ ! -f "$pm2_tpl" ]]; then
-        log_error "Template PM2 nao encontrado: $pm2_tpl"
-        return 1
-    fi
 
     sed -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
         -e "s|__NODE_ENV__|$node_env|g" \
@@ -1068,71 +635,37 @@ setup_pm2_services() {
         "$pm2_tpl" > "$pm2_dest"
 
     chown multitenant:multitenant "$pm2_dest"
-
-    log_success "Arquivo PM2 ecosystem criado: $pm2_dest"
+    log_success "PM2 ecosystem criado."
 }
 
 start_pm2_services() {
     log_info "Iniciando aplicacao com PM2..."
     cd "$PROJECT_ROOT"
-
-    sudo -u multitenant pm2 start ecosystem.config.js
-    sudo -u multitenant pm2 save
-
-    sleep 5
-
-    # Verificar status
-    sudo -u multitenant pm2 list
-
+    sudo -u multitenant bash -lc 'pm2 start ecosystem.config.js && pm2 save'
     log_success "Aplicacao iniciada com PM2."
 }
 
 # =============================================================================
-# Permissoes do projeto
+# Permissoes e Healthcheck
 # =============================================================================
 
 fix_project_permissions() {
     log_info "Ajustando permissoes do projeto..."
     chown -R multitenant:multitenant "$PROJECT_ROOT"
-    # Manter diretorio do instalador acessivel ao root para futuras reinstalacoes
-    chmod -R 755 "$INSTALL2_DIR"
+    chmod -R 755 "$PROJECT_ROOT"
     log_success "Permissoes ajustadas."
 }
 
-# =============================================================================
-# Verificacao de saude (healthcheck)
-# =============================================================================
-
 check_native_health() {
     local domain="$1"
-    local retries=12
-    local wait_seconds=5
-
     log_info "Verificando saude da aplicacao..."
-
-    for ((i=1; i<=retries; i++)); do
-        # Verificar backend
-        if curl -sf http://127.0.0.1:4000/api/health >/dev/null 2>&1; then
-            log_success "Backend respondendo em :4000"
-
-            # Verificar frontend
-            if curl -sf http://127.0.0.1:5000/ >/dev/null 2>&1; then
-                log_success "Frontend respondendo em :5000"
-                return 0
-            fi
-        fi
-
-        log_info "Aguardando servicos iniciarem... ($i/$retries)"
-        sleep "$wait_seconds"
-    done
-
-    log_warn "Timeout aguardando servicos. Verifique os logs."
-    return 1
+    sleep 10
+    if curl -sf http://127.0.0.1:4000/api/health >/dev/null 2>&1; then
+        log_success "Backend respondendo."
+    else
+        log_warn "Backend nao respondeu no healthcheck local."
+    fi
 }
-
-# =============================================================================
-# Relatorio final (instalacao nativa)
-# =============================================================================
 
 print_native_report() {
     local domain="$1"
@@ -1145,68 +678,10 @@ print_native_report() {
     local enc_key="$8"
     local process_mgr="$9"
 
-    echo -e "\n\n"
-    echoblue "=========================================================="
-    echoblue "  RELATORIO FINAL - INSTALACAO NATIVA MULTITENANT         "
-    echoblue "=========================================================="
-    echo -e "\n"
-
-    echo -e "\033[1;32mACESSO AO SISTEMA:\033[0m"
-    echo -e "   URL Principal:  https://$domain"
-    echo -e "   API Endpoint:   https://$domain/api"
-    echo -e "   API Health:     https://$domain/api/health"
-    echo -e "\n"
-
-    echo -e "\033[1;32mCREDENCIAIS DO ADMINISTRADOR:\033[0m"
-    echo -e "   Email:          $admin_email"
-    echo -e "   Senha:          $admin_pass"
-    echo -e "   Nivel:          SUPER_ADMIN"
-    echo -e "\n"
-
-    echo -e "\033[1;32mBANCO DE DADOS (PostgreSQL):\033[0m"
-    echo -e "   Host:           localhost"
-    echo -e "   Porta:          5432"
-    echo -e "   Banco:          $db_name"
-    echo -e "   Usuario:        $db_user"
-    echo -e "   Senha:          $db_pass"
-    echo -e "\n"
-
-    echo -e "\033[1;32mCACHE (Redis):\033[0m"
-    echo -e "   Host:           127.0.0.1"
-    echo -e "   Porta:          6379"
-    echo -e "\n"
-
-    echo -e "\033[1;32mSEGREDOS DO SISTEMA:\033[0m"
-    echo -e "   JWT_SECRET:     $jwt_secret"
-    echo -e "   ENCRYPTION_KEY: $enc_key"
-    echo -e "\n"
-
-    echo -e "\033[1;32mGERENCIAMENTO DE PROCESSOS ($process_mgr):\033[0m"
-    if [[ "$process_mgr" == "pm2" ]]; then
-        echo -e "   Status:         sudo -u multitenant pm2 list"
-        echo -e "   Logs:           sudo -u multitenant pm2 logs"
-        echo -e "   Restart:        sudo -u multitenant pm2 restart all"
-        echo -e "   Stop:           sudo -u multitenant pm2 stop all"
-    else
-        echo -e "   Status backend: systemctl status multitenant-backend"
-        echo -e "   Status front:   systemctl status multitenant-frontend"
-        echo -e "   Logs backend:   journalctl -u multitenant-backend -f"
-        echo -e "   Logs front:     journalctl -u multitenant-frontend -f"
-        echo -e "   Restart:        systemctl restart multitenant-backend multitenant-frontend"
-    fi
-    echo -e "\n"
-
-    echo -e "\033[1;32mNGINX:\033[0m"
-    echo -e "   Config:         /etc/nginx/sites-available/multitenant"
-    echo -e "   Logs acesso:    /var/log/nginx/access.log"
-    echo -e "   Logs erro:      /var/log/nginx/error.log"
-    echo -e "   Reload:         systemctl reload nginx"
-    echo -e "\n"
-
-    echoblue "=========================================================="
-    log_info "Guarde estas informacoes em local seguro!"
-    log_info "Arquivo de configuracao backend: $PROJECT_ROOT/apps/backend/.env"
-    log_info "Arquivo de configuracao frontend: $PROJECT_ROOT/apps/frontend/.env.local"
-    echogreen "Instalacao nativa concluida com sucesso!"
-    echo -e "\n"
+    print_header "RELATORIO FINAL - INSTALACAO NATIVA"
+    echo -e "URL: https://$domain"
+    echo -e "Admin: $admin_email / $admin_pass"
+    echo -e "DB: $db_name (User: $db_user)"
+    echo -e "Process Manager: $process_mgr"
+    print_separator
 }
